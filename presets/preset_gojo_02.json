@@ -1,0 +1,48 @@
+{
+  "live_warp": true,
+  "show_mesh": true,
+  "projections": [
+    {
+      "media_path": "/home/nidhi/Downloads/20251017_1136_Mystical Gojo Portrait_simple_compose_01k7scy14kecpb1z28ge6yf9m3.png",
+      "target_quad": [
+        [
+          844.0,
+          71.60000000000001
+        ],
+        [
+          1125.7,
+          74.3
+        ],
+        [
+          1124.8,
+          442.8
+        ],
+        [
+          847.2,
+          423.60000000000014
+        ]
+      ]
+    },
+    {
+      "media_path": "/home/nidhi/Downloads/ChatGPT Image Oct 17, 2025, 11_15_16 AM.png",
+      "target_quad": [
+        [
+          345.6,
+          82.80000000000001
+        ],
+        [
+          592.0,
+          82.80000000000001
+        ],
+        [
+          595.2,
+          438.8
+        ],
+        [
+          344.8,
+          437.20000000000005
+        ]
+      ]
+    }
+  ]
+}
