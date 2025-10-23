@@ -33,7 +33,7 @@ class Canvas(QWidget):
         self.show_mesh = True
         self.drag_idx = -1
         self.handle_radius = 10
-        self.bg_color = QColor(18, 18, 18)
+        self.bg_color = QColor(0, 0, 0)
 
         self._cached_frame: np.ndarray = None
 
@@ -96,67 +96,75 @@ class Canvas(QWidget):
     # canvas.py
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), self.bg_color)
+        # ok = painter.begin(self)  
 
-        if not self.projections:
-            painter.setPen(QPen(QColor(220, 220, 220)))
-            painter.drawText(
-                self.rect(),
-                Qt.AlignCenter,
-                "Add media (Toolbar → Add Media) to begin.\nDrag corner handles to align.",
-            )
+        # if not ok:
+        #     return
+
+        try:
+            painter.fillRect(self.rect(), self.bg_color)
+            if not self.projections:
+                painter.setPen(QPen(QColor(220, 220, 220)))
+                painter.drawText(
+                    self.rect(),
+                    Qt.AlignCenter,
+                    "Add media (Toolbar → Add Media) to begin.\nDrag corner handles to align.",
+                )
+                self.draw_overlay(painter)
+                return
+
+            w, h = self.width(), self.height()
+
+            for idx, proj in enumerate(self.projections):
+                frame = proj.media.get_frame()
+                if frame is None:
+                    continue
+
+                # source and destination quads
+                src_w, src_h = proj.media.get_source_size()
+                src_quad = np.array(
+                    [[0, 0], [src_w - 1, 0], [src_w - 1, src_h - 1], [0, src_h - 1]],
+                    dtype=np.float32,
+                )
+                dst_quad = np.array([[p.x(), p.y()] for p in proj.target_quad], dtype=np.float32)
+
+                # Build clip path for this quad (ALWAYS clip!)
+                path = QPainterPath()
+                path.moveTo(dst_quad[0][0], dst_quad[0][1])
+                for i in range(1, 4):
+                    path.lineTo(dst_quad[i][0], dst_quad[i][1])
+                path.closeSubpath()
+
+                painter.save()
+                painter.setClipPath(path)
+
+                if self.live_warp:
+                    # Warp into full-canvas buffer, then draw under clip
+                    H = cv2.getPerspectiveTransform(src_quad, dst_quad)
+                    warped = cv2.warpPerspective(frame, H, (w, h))
+                    qimg = cv_to_qimage(warped)
+                    painter.drawImage(0, 0, qimg)
+                else:
+                    # Non-live mode: draw the raw frame scaled to the quad’s bounding box, still clipped to quad
+                    qimg = cv_to_qimage(frame)
+                    # simple bounding-rect fit (keeps aspect)
+                    minx, miny = np.min(dst_quad, axis=0).astype(int)
+                    maxx, maxy = np.max(dst_quad, axis=0).astype(int)
+                    bw = max(1, maxx - minx)
+                    bh = max(1, maxy - miny)
+                    scaled = qimg.scaled(bw, bh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    # center inside the bounding rect
+                    ox = minx + (bw - scaled.width()) // 2
+                    oy = miny + (bh - scaled.height()) // 2
+                    painter.drawImage(ox, oy, scaled)
+
+                painter.restore()
+
+            # Draw overlays LAST, so handles/mesh are always visible
             self.draw_overlay(painter)
-            return
 
-        w, h = self.width(), self.height()
-
-        for idx, proj in enumerate(self.projections):
-            frame = proj.media.get_frame()
-            if frame is None:
-                continue
-
-            # source and destination quads
-            src_w, src_h = proj.media.get_source_size()
-            src_quad = np.array(
-                [[0, 0], [src_w - 1, 0], [src_w - 1, src_h - 1], [0, src_h - 1]],
-                dtype=np.float32,
-            )
-            dst_quad = np.array([[p.x(), p.y()] for p in proj.target_quad], dtype=np.float32)
-
-            # Build clip path for this quad (ALWAYS clip!)
-            path = QPainterPath()
-            path.moveTo(dst_quad[0][0], dst_quad[0][1])
-            for i in range(1, 4):
-                path.lineTo(dst_quad[i][0], dst_quad[i][1])
-            path.closeSubpath()
-
-            painter.save()
-            painter.setClipPath(path)
-
-            if self.live_warp:
-                # Warp into full-canvas buffer, then draw under clip
-                H = cv2.getPerspectiveTransform(src_quad, dst_quad)
-                warped = cv2.warpPerspective(frame, H, (w, h))
-                qimg = cv_to_qimage(warped)
-                painter.drawImage(0, 0, qimg)
-            else:
-                # Non-live mode: draw the raw frame scaled to the quad’s bounding box, still clipped to quad
-                qimg = cv_to_qimage(frame)
-                # simple bounding-rect fit (keeps aspect)
-                minx, miny = np.min(dst_quad, axis=0).astype(int)
-                maxx, maxy = np.max(dst_quad, axis=0).astype(int)
-                bw = max(1, maxx - minx)
-                bh = max(1, maxy - miny)
-                scaled = qimg.scaled(bw, bh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                # center inside the bounding rect
-                ox = minx + (bw - scaled.width()) // 2
-                oy = miny + (bh - scaled.height()) // 2
-                painter.drawImage(ox, oy, scaled)
-
-            painter.restore()
-
-        # Draw overlays LAST, so handles/mesh are always visible
-        self.draw_overlay(painter)
+        finally:    
+            painter.end()
 
 
     def draw_overlay(self, painter: QPainter):
