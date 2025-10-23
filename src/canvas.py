@@ -4,9 +4,9 @@ import cv2
 import numpy as np
 from PySide6 import QtCore
 from PySide6.QtCore import Qt, QPointF, QRect
-from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath
+from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QPainterPath, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QWidget,
+    QWidget, QMenu
 )
 
 from projections import Projection
@@ -36,6 +36,67 @@ class Canvas(QWidget):
         self.bg_color = QColor(0, 0, 0)
 
         self._cached_frame: np.ndarray = None
+
+        # Delete key shortcuts
+        self._sc_delete = QShortcut(QKeySequence(Qt.Key_Delete), self)
+        self._sc_delete.activated.connect(self.delete_selected_projection)
+
+        self._sc_backspace = QShortcut(QKeySequence(Qt.Key_Backspace), self)
+        self._sc_backspace.activated.connect(self.delete_selected_projection)
+
+
+    # --- HIT TESTS / HELPERS ---
+
+    def _path_for_quad(self, quad: List[QPointF]) -> QPainterPath:
+        path = QPainterPath()
+        path.moveTo(quad[0])
+        for i in range(1, 4):
+            path.lineTo(quad[i])
+        path.closeSubpath()
+        return path
+
+    def _projection_under(self, pos: QPointF) -> int:
+        """Return topmost projection index whose quad contains pos, else -1."""
+        # Check from top (last drawn) to bottom so clicks prefer the topmost one
+        for rev_idx, proj in enumerate(reversed(self.projections)):
+            idx = len(self.projections) - 1 - rev_idx
+            if self._path_for_quad(proj.target_quad).contains(pos):
+                return idx
+        return -1
+
+    def _bring_to_top(self, idx: int):
+        if 0 <= idx < len(self.projections):
+            self.projections.append(self.projections.pop(idx))
+            self.selected_idx = len(self.projections) - 1
+
+    # --- DELETION ---
+
+    def delete_projection(self, idx: int):
+        """Delete a projection by index and keep selection sane."""
+        if not (0 <= idx < len(self.projections)):
+            return
+        # Optional: release video capture
+        try:
+            vs = self.projections[idx].media
+            if getattr(vs, "cap", None) is not None:
+                vs.cap.release()
+        except Exception:
+            pass
+
+        del self.projections[idx]
+
+        if not self.projections:
+            self.selected_idx = -1
+        else:
+            # If we deleted the last one, move selection to new last
+            self.selected_idx = min(idx, len(self.projections) - 1)
+        self.update()
+
+    def delete_selected_projection(self):
+        """Delete the currently selected projection (for Delete/Backspace)."""
+        if 0 <= self.selected_idx < len(self.projections):
+            self.delete_projection(self.selected_idx)
+
 
     def _default_quad(self) -> List[QPointF]:
         """Quad inset from widget edges."""
@@ -210,19 +271,42 @@ class Canvas(QWidget):
 
     # canvas.py
     def mousePressEvent(self, event):
+        pos = event.position()
+
         if event.button() == Qt.LeftButton:
-            pos = event.position()
+            # Prefer handle hits (drag)
             pidx, hidx = self._hit_handle(pos)
             if pidx != -1:
                 self.selected_idx = pidx
                 self.drag_idx = hidx
                 # raise selected to top so it renders last
-                if 0 <= pidx < len(self.projections):
-                    self.projections.append(self.projections.pop(pidx))
-                    self.selected_idx = len(self.projections) - 1
+                self._bring_to_top(self.selected_idx)
                 self.update()
                 return
+
+            # If not a handle, see if we clicked inside a quad to select it
+            pidx = self._projection_under(pos)
+            if pidx != -1:
+                self._bring_to_top(pidx)
+                self.update()
+                return
+
+        elif event.button() == Qt.RightButton:
+            # Right-click: select item under cursor (if any) and show menu
+            pidx = self._projection_under(pos)
+            if pidx != -1:
+                self._bring_to_top(pidx)
+                self.update()
+
+                menu = QMenu(self)
+                act_del = menu.addAction("Delete Media")
+                act = menu.exec(event.globalPosition().toPoint())
+                if act == act_del:
+                    self.delete_selected_projection()
+                return
+
         super().mousePressEvent(event)
+
 
 
     def mouseMoveEvent(self, event):
